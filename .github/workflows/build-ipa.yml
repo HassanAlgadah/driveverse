@@ -1,0 +1,56 @@
+# Builds an unsigned DriveVerse.ipa on a GitHub macOS runner, for sideloading
+# with Sideloadly/AltStore (which sign it with your own Apple ID).
+# Run it from the Actions tab -> "Build unsigned IPA" -> Run workflow.
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      # Secrets.plist is gitignored but the build needs it. Uses the
+      # SPOTIFY_CLIENT_ID repo secret if set; Apple Music works without it.
+      - name: Create Secrets.plist
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+        run: |
+          cp DriveVerse/Resources/Secrets.example.plist DriveVerse/Resources/Secrets.plist
+          if [ -n "$SPOTIFY_CLIENT_ID" ]; then
+            /usr/libexec/PlistBuddy -c "Set :SpotifyClientID $SPOTIFY_CLIENT_ID" DriveVerse/Resources/Secrets.plist
+          fi
+
+      # The upstream bundle ID is registered to its author's team.
+      - name: Use own bundle identifier
+        run: sed -i '' 's/com\.praveetgupta\./com.hassan./g' DriveVerse.xcodeproj/project.pbxproj
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project DriveVerse.xcodeproj \
+            -scheme DriveVerse \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/DriveVerse.app Payload/
+          ls Payload/DriveVerse.app/PlugIns
+          zip -qry DriveVerse.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DriveVerse-ipa
+          path: DriveVerse.ipa
